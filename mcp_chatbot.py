@@ -3,7 +3,6 @@ import json
 import asyncio
 import pandas as pd
 import streamlit as st
-from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI
 import mcp.types as types
 from mcp import StdioServerParameters
@@ -190,3 +189,4 @@ if st.button("Run Query"):
 if st.session_state.schema:
     st.subheader("Current Schema")
     st.json(st.session_state.schema)
+
