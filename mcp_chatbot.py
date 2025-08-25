@@ -15,7 +15,7 @@ def validate_api_key(api_key: str) -> bool:
     try:
         os.environ["GOOGLE_API_KEY"] = api_key
         test_model = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
-        _ = test_model.invoke("ping")   # simple lightweight test
+        _ = test_model.invoke("ping")   # lightweight test
         return True
     except Exception:
         return False
@@ -189,4 +189,3 @@ if st.button("Run Query"):
 if st.session_state.schema:
     st.subheader("Current Schema")
     st.json(st.session_state.schema)
-
