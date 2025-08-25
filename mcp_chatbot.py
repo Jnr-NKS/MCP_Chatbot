@@ -1,66 +1,172 @@
-import os
-import json
-import asyncio
-import pandas as pd
 import streamlit as st
-from langchain_google_genai import ChatGoogleGenerativeAI
-import mcp.types as types
-from mcp import StdioServerParameters
+import asyncio
 from mcp.client.stdio import stdio_client
+from mcp.client.stdio import StdioServerParameters
+import pyodbc  # For database connection validation
+import requests  # For Gemini API validation
 
-# --------------------------
-# Streamlit App
-# --------------------------
-st.set_page_config(page_title="MCP + Gemini SQL Chatbot", layout="wide")
+st.set_page_config(page_title="MCP SQL Query Runner", layout="wide")
+st.title("⚡ MCP SQL Query Runner")
 
-# Step 1: API Key Input Gate
-if "api_key" not in st.session_state:
-    st.session_state.api_key = None
+# Initialize session state for connection status
+if 'db_connected' not in st.session_state:
+    st.session_state.db_connected = False
+if 'gemini_validated' not in st.session_state:
+    st.session_state.gemini_validated = False
 
-if not st.session_state.api_key:
-    st.title("🔑 Enter your Gemini API Key")
-    api_key_input = st.text_input("Gemini API Key", type="password")
+# -------------------------------
+# User inputs for Gemini API
+# -------------------------------
+st.subheader("🔑 Enter Gemini API Key")
 
-    if st.button("Validate Key"):
-        try:
-            # Test the key by calling Gemini
-            test_model = ChatGoogleGenerativeAI(model="gemini-1.5-flash", google_api_key=api_key_input)
-            test_model.invoke("Say hello!")  # quick validation
-            st.session_state.api_key = api_key_input
-            st.success("✅ API Key validated successfully!")
-            st.rerun()
-        except Exception as e:
-            st.error(f"❌ Invalid API Key: {str(e)}")
-    st.stop()
+gemini_api_key = st.text_input("Gemini API Key", type="password", 
+                              placeholder="Enter your Gemini API key")
 
-# Step 2: Main Chatbot Screen
-st.title("💬 Query Your Azure SQL with MCP + Gemini")
+# Validate Gemini API key
+def validate_gemini_api(api_key):
+    if not api_key:
+        return False, "API key is empty"
+    
+    try:
+        # Simple validation - try to make a basic request to Gemini API
+        # Adjust the validation endpoint as needed for Gemini API
+        response = requests.get(
+            "https://generativelanguage.googleapis.com/v1/models",
+            params={"key": api_key},
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            return True, "✅ Gemini API key is valid"
+        else:
+            return False, f"❌ Gemini API validation failed: {response.status_code} - {response.text}"
+    except Exception as e:
+        return False, f"❌ Error validating Gemini API: {str(e)}"
 
-# Input query
-user_question = st.text_input(
-    "Ask a question about your Azure SQL data:",
-    placeholder="e.g., Show me the top 10 customers by total sales"
-)
-
-# Button to run query
-if st.button("Run Query"):
-    if not user_question.strip():
-        st.warning("Please enter a question.")
+if st.button("Validate Gemini API"):
+    if gemini_api_key:
+        with st.spinner("Validating Gemini API key..."):
+            is_valid, message = validate_gemini_api(gemini_api_key)
+            if is_valid:
+                st.session_state.gemini_validated = True
+                st.success(message)
+            else:
+                st.session_state.gemini_validated = False
+                st.error(message)
     else:
-        try:
-            # Initialize Gemini with user-provided key
-            model = ChatGoogleGenerativeAI(
-                model="gemini-1.5-flash",
-                google_api_key=st.session_state.api_key
-            )
+        st.error("Please enter a Gemini API key")
 
-            # For demo purposes, just echo user query
-            response = model.invoke(f"Generate SQL for this question: {user_question}")
-            st.subheader("Generated SQL Query")
-            st.code(response.content, language="sql")
+# -------------------------------
+# User inputs for DB connection
+# -------------------------------
+st.subheader("🔑 Enter SQL Database Credentials")
 
-            # ⚠️ Next step: Use MCP SQL connector to actually run query
-            st.info("MCP SQL execution not yet implemented in this snippet.")
+server = st.text_input("Server", placeholder="e.g., chatbotdatabase123.database.windows.net")
+database = st.text_input("Database", placeholder="e.g., chatbotdatabase")
+username = st.text_input("Username", placeholder="e.g., admin123")
+password = st.text_input("Password", type="password")
 
-        except Exception as e:
-            st.error(f"Error: {str(e)}")
+# Build connection string (Azure SQL with ODBC)
+conn_str = ""
+if server and database and username and password:
+    conn_str = (
+        f"Driver={{ODBC Driver 18 for SQL Server}};"
+        f"Server={server},1433;"
+        f"Database={database};"
+        f"Uid={username};"
+        f"Pwd={password};"
+        f"Encrypt=yes;"
+        f"TrustServerCertificate=no;"
+        f"Connection Timeout=30;"
+    )
+
+# Validate database connection
+def validate_db_connection(connection_string):
+    if not connection_string:
+        return False, "Connection string is empty"
+    
+    try:
+        conn = pyodbc.connect(connection_string)
+        conn.close()
+        return True, "✅ Database connection successful"
+    except pyodbc.Error as e:
+        return False, f"❌ Database connection failed: {str(e)}"
+    except Exception as e:
+        return False, f"❌ Error: {str(e)}"
+
+if st.button("Test Database Connection"):
+    if conn_str:
+        with st.spinner("Testing database connection..."):
+            is_connected, message = validate_db_connection(conn_str)
+            if is_connected:
+                st.session_state.db_connected = True
+                st.success(message)
+            else:
+                st.session_state.db_connected = False
+                st.error(message)
+    else:
+        st.error("Please fill in all database credentials")
+
+# Show connection status
+if st.session_state.gemini_validated and st.session_state.db_connected:
+    st.success("✅ Both Gemini API and Database are successfully connected!")
+elif st.session_state.gemini_validated:
+    st.info("✅ Gemini API connected, but database not yet validated")
+elif st.session_state.db_connected:
+    st.info("✅ Database connected, but Gemini API not yet validated")
+
+# -------------------------------
+# User input for SQL query (only show if both validations passed)
+# -------------------------------
+if st.session_state.gemini_validated and st.session_state.db_connected:
+    st.subheader("📝 Write your SQL query")
+    query = st.text_area(
+        "SQL Query",
+        placeholder="e.g., SELECT TOP 10 * FROM SalesLT.Customer"
+    )
+
+    # -------------------------------
+    # MCP SQL Execution Function
+    # -------------------------------
+    async def run_mcp_query(conn_str: str, query: str):
+        if not conn_str:
+            return "❌ Connection string is missing."
+        if not query:
+            return "❌ SQL query is missing."
+
+        params = StdioServerParameters(
+            command="npx",
+            args=[
+                "-y",
+                "@modelcontextprotocol/server-sql",
+                "--connection-string", conn_str
+            ]
+        )
+
+        async with stdio_client(params) as (read, write):
+            # List tools
+            tools = await write.list_tools()
+            sql_tool = next((t for t in tools if "query" in t.name.lower()), None)
+            if not sql_tool:
+                return "❌ No SQL query tool found in MCP server."
+
+            # Execute query
+            result = await write.call_tool(sql_tool.name, {"query": query})
+            return result.content[0].text if result.content else "✅ Query executed, but no results."
+
+    # -------------------------------
+    # Run query button
+    # -------------------------------
+    if st.button("🚀 Run Query"):
+        if not query:
+            st.error("Please provide a SQL query.")
+        else:
+            with st.spinner("Running query via MCP..."):
+                try:
+                    result = asyncio.run(run_mcp_query(conn_str, query))
+                    st.success("Query Completed ✅")
+                    st.code(result, language="sql")
+                except Exception as e:
+                    st.error(f"Error running query: {str(e)}")
+else:
+    st.info("Please validate both Gemini API and Database connection to enable query execution")
