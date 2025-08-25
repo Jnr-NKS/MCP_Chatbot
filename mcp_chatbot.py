@@ -2,8 +2,8 @@ import streamlit as st
 import asyncio
 from mcp.client.stdio import stdio_client
 from mcp.client.stdio import StdioServerParameters
-import pyodbc  # For database connection validation
 import requests  # For Gemini API validation
+import os
 
 st.set_page_config(page_title="MCP SQL Query Runner", layout="wide")
 st.title("⚡ MCP SQL Query Runner")
@@ -29,7 +29,6 @@ def validate_gemini_api(api_key):
     
     try:
         # Simple validation - try to make a basic request to Gemini API
-        # Adjust the validation endpoint as needed for Gemini API
         response = requests.get(
             "https://generativelanguage.googleapis.com/v1/models",
             params={"key": api_key},
@@ -80,24 +79,32 @@ if server and database and username and password:
         f"Connection Timeout=30;"
     )
 
-# Validate database connection
-def validate_db_connection(connection_string):
+# Validate database connection using MCP server
+async def validate_db_connection_mcp(connection_string):
     if not connection_string:
         return False, "Connection string is empty"
     
     try:
-        conn = pyodbc.connect(connection_string)
-        conn.close()
-        return True, "✅ Database connection successful"
-    except pyodbc.Error as e:
-        return False, f"❌ Database connection failed: {str(e)}"
+        params = StdioServerParameters(
+            command="npx",
+            args=[
+                "-y",
+                "@modelcontextprotocol/server-sql",
+                "--connection-string", connection_string
+            ]
+        )
+
+        async with stdio_client(params) as (read, write):
+            # Try to list tables to test the connection
+            result = await write.call_tool("query", {"query": "SELECT 1 AS test"})
+            return True, "✅ Database connection successful"
     except Exception as e:
-        return False, f"❌ Error: {str(e)}"
+        return False, f"❌ Database connection failed: {str(e)}"
 
 if st.button("Test Database Connection"):
     if conn_str:
         with st.spinner("Testing database connection..."):
-            is_connected, message = validate_db_connection(conn_str)
+            is_connected, message = asyncio.run(validate_db_connection_mcp(conn_str))
             if is_connected:
                 st.session_state.db_connected = True
                 st.success(message)
